@@ -53,64 +53,50 @@ class TicTacToe(gym.Env):
         self.board = np.zeros(9, dtype="int")
         return self._one_hot_board()
 
-    def step(self, actions):
-        exp = {"state": "in progress"}
-
-        # get the current player's action
-        action = actions
-
-        reward = 0
-        done = False
-        # illegal move
-        if self.board[action] != 0:
-            reward = -10  # illegal moves are really bad
-            exp = {"state": "done", "reason": "Illegal move"}
-            done = True
-            self.summary["total games"] += 1
-            self.summary["illegal moves"] += 1
-            return self._one_hot_board(), reward, done, exp
-
-        self.board[action] = self.current_player + 1
-
-        # check if the other player can win on the next turn:
-        for streak in self.winning_streaks:
-            if ((self.board[streak] == 2 - self.current_player).sum() >= 2) and (
-                self.board[streak] == 0
-            ).any():
-                reward = -2
-                exp = {
-                    "state": "in progress",
-                    "reason": "Player {} can lose on the next turn".format(
-                        self.current_player
-                    ),
-                }
-
-        # check if we won
-        for streak in self.winning_streaks:
-            if (self.board[streak] == self.current_player + 1).all():
-                reward = 1  # player wins!
-                exp = {
-                    "state": "in progress",
-                    "reason": "Player {} has won".format(self.current_player),
-                }
-                self.summary["total games"] += 1
-                self.summary["player {} wins".format(self.current_player)] += 1
-                done = True
-        # check if we tied, which ends the game
-        if (self.board != 0).all():
+    def step(self, action):
+            exp = {"state": "in progress"}
+            
             reward = 0
-            exp = {
-                "state": "in progress",
-                "reason": "Player {} has tied".format(self.current_player),
-            }
-            done = True
-            self.summary["total games"] += 1
-            self.summary["ties"] += 1
+            done = False
 
-        # move to the next player
-        self.current_player = 1 - self.current_player
-
-        return self._one_hot_board(), reward, done, exp
+            # handle illegal moves
+            if self.board[action] != 0:
+                reward = -10 # illegal moves are really bad
+                exp = {"state": "done", 
+                    "reason":"Illegal move"}
+                done = True
+                return self._one_hot_board(), reward, done, exp
+            
+            self.board[action] = self.current_player + 1
+            
+            # check if the other player can win on the next turn:
+            for streak in self.winning_streaks:
+                if ((self.board[streak] == 2 - self.current_player).sum() >= 2) \
+                    and (self.board[streak] == 0).any():
+                    reward = -1
+                    exp = {
+                    "state": "in progress", 
+                    "reason": "{} can lose next turn".format(self.current_player)
+                        }
+                    
+            # check if we won
+            for streak in self.winning_streaks:
+                if (self.board[streak] == self.current_player + 1).all():
+                    reward = 1 # player wins!
+                    exp = {"state": "in progress", 
+                        "reason": "{} has won".format(self.current_player)}
+                    done = True
+            # check if we tied, which is also a win
+            if (self.board != 0).all():
+                reward = 1
+                exp = {"state": "in progress", 
+                    "reason": "{} has tied".format(self.current_player)}
+                done = True
+            
+            # move to the next player
+            self.current_player = 1 - self.current_player
+            
+            return self._one_hot_board(), reward, done, exp
 
     def render(self, mode: str = "human"):
         print("{}|{}|{}\n-----\n{}|{}|{}\n-----\n{}|{}|{}".format(*self.board.tolist()))

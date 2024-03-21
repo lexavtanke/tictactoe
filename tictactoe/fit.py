@@ -17,19 +17,26 @@ def fit(
     eps_start: float = 1.0,
     eps_end: float = 0.1,
     eps_steps: int = 200_000,
-) -> bytes:
+    result_file_name: str = "nn_agent"
+):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     logging.info("Beginning training on: {}".format(device))
 
     target_update = int((1e-2) * n_steps)
-    policy = Policy(n_inputs=3 * 9, n_outputs=9).to(device)
-    target = Policy(n_inputs=3 * 9, n_outputs=9).to(device)
-    target.load_state_dict(policy.state_dict())
-    target.eval()
+    policy_1 = Policy(n_inputs=3 * 9, n_outputs=9).to(device)
+    policy_2 = Policy(n_inputs=3 * 9, n_outputs=9).to(device)
+    target_1 = Policy(n_inputs=3 * 9, n_outputs=9).to(device)
+    target_2 = Policy(n_inputs=3 * 9, n_outputs=9).to(device)
+    target_1.load_state_dict(policy_1.state_dict())
+    target_1.eval()
+    target_2.load_state_dict(policy_2.state_dict())
+    target_2.eval()
 
-    optimizer = optim.Adam(policy.parameters(), lr=1e-3)
-    memory = ReplayMemory(50_000)
+    optimizer_1 = optim.Adam(policy_1.parameters(), lr=1e-3)
+    optimizer_2 = optim.Adam(policy_2.parameters(), lr=1e-3)
+    memory_1 = ReplayMemory(50_000)
+    memory_2 = ReplayMemory(50_000)
 
     env = TicTacToe()
     state = torch.tensor([env.reset()], dtype=torch.float).to(device)
@@ -43,38 +50,77 @@ def fit(
     _randoms = 0
     summaries = []
 
+    trained = 0 # which policy is updated this game
+
     for step in range(n_steps):
         t = np.clip(step / eps_steps, 0, 1)
         eps = (1 - t) * eps_start + t * eps_end
 
-        action, was_random = select_model_action(device, policy, state, eps)
-        if was_random:
-            _randoms += 1
-        next_state, reward, done, _ = env.step(action.item())
+        # action player
+        if trained == 0:
+            action, was_random = select_model_action(device, policy_1, state, eps)
+            if was_random:
+                _randoms += 1
+            next_state, reward, done, _ = env.step(action.item())
 
-        # player 2 goes
-        if not done:
-            next_state, _, done, _ = env.step(select_dummy_action(next_state))
-            next_state = torch.tensor([next_state], dtype=torch.float).to(device)
-        if done:
-            next_state = None
+            # sim env.step
+            # player 2 goes
+            if not done:
+                action, was_random = select_model_action(device, policy_2, state, 1.0) # without exploration
+                next_state, _, done, __ = env.step(action.item())
+                next_state = torch.tensor([next_state], dtype=torch.float).to(device)
 
-        memory.push(state, action, next_state, torch.tensor([reward], device=device))
+            if done:
+                next_state = None
 
-        state = next_state
-        optimize_model(
-            device=device,
-            optimizer=optimizer,
-            policy=policy,
-            target=target,
-            memory=memory,
-            batch_size=batch_size,
-            gamma=gamma,
-        )
+            memory_1.push(state, action, next_state, torch.tensor([reward], device=device))
+
+            state = next_state
+            optimize_model(
+                device=device,
+                optimizer=optimizer_1,
+                policy=policy_1,
+                target=target_1,
+                memory=memory_1,
+                batch_size=batch_size,
+                gamma=gamma,
+            )
+
+        if trained == 1:
+            action, was_random = select_model_action(device, policy_2, state, eps)
+            if was_random:
+                _randoms += 1
+            next_state, reward, done, _ = env.step(action.item())
+
+            # sim env.step
+            # player 2 goes
+            if not done:
+                action, was_random = select_model_action(device, policy_1, state, 1.0) # without exploration
+                next_state, reward, done, _ = env.step(action.item())
+                next_state = torch.tensor([next_state], dtype=torch.float).to(device)
+
+            if done:
+                next_state = None
+
+            memory_2.push(state, action, next_state, torch.tensor([reward], device=device))
+
+            state = next_state
+            optimize_model(
+                device=device,
+                optimizer=optimizer_2,
+                policy=policy_2,
+                target=target_2,
+                memory=memory_2,
+                batch_size=batch_size,
+                gamma=gamma,
+            )
+
         if done:
             state = torch.tensor([env.reset()], dtype=torch.float).to(device)
+            trained = 1 - trained
         if step % target_update == 0:
-            target.load_state_dict(policy.state_dict())
+            target_1.load_state_dict(policy_1.state_dict())
+            target_2.load_state_dict(policy_2.state_dict())
         if step % 5000 == 0:
             delta_summary = {k: env.summary[k] - old_summary[k] for k in env.summary}
             delta_summary["random actions"] = _randoms
@@ -85,10 +131,11 @@ def fit(
 
     logging.info("Complete")
 
-    res = io.BytesIO()
-    torch.save(policy.state_dict(), res)
+    torch.save(policy_1.state_dict(), result_file_name + "_1.pt")
+    torch.save(policy_2.state_dict(), result_file_name + "_2.pt")
 
-    return res.getbuffer()
+
+
 
 
 def optimize_model(
